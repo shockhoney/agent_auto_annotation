@@ -1,0 +1,22 @@
+# Core dependencies
+numpy>=1.21.0
+opencv-python>=4.5.0
+Pillow>=9.0.0
+PyYAML>=6.0
+
+# 3D processing
+open3d>=0.15.0
+
+# Data format handling
+pycocotools>=2.0.4
+
+# Utilities
+tqdm>=4.62.0
+colorlog>=6.6.0
+
+# Optional: Advanced format conversion
+# fiftyone>=0.16.0  # Uncomment if using FiftyOne
+
+# Testing
+pytest>=7.0.0
+pytest-cov>=3.0.0
