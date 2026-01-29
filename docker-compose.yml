@@ -1,0 +1,14 @@
+services:
+  data-agent:
+    build: .
+    container_name: data_preprocess_agent
+    restart: always
+    ports:
+      - "8000:8000"  # Dify 将通过这个端口访问 API
+    volumes:
+      - ./src:/app/src
+      - ./raw_data:/app/data/input
+      - ./output:/app/data/output
+    environment:
+      - OPENAI_API_KEY=你的_OPENAI_API_KEY
+      - OPEN3D_CPU_RENDERING=true  # 强制使用 CPU 渲染，防止在无显卡服务器报错
