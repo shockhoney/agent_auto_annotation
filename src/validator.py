@@ -82,16 +82,7 @@ class DataValidator:
         else:
             self._add_warning("data_config.yaml not found")
         
-        # Check metadata.json
-        metadata_path = self.data_root / "metadata.json"
-        if metadata_path.exists():
-            try:
-                metadata = load_json(str(metadata_path))
-                self._add_success("metadata.json is valid")
-            except Exception as e:
-                self._add_failure(f"metadata.json is invalid: {e}")
-        else:
-            self._add_warning("metadata.json not found")
+        # Skip metadata.json check - file no longer generated
     
     def _validate_2d(self) -> None:
         """Validate 2D COCO format."""

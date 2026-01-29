@@ -14,12 +14,16 @@ from utils.logger import logger
 class KITTIConverter:
     """Converts 3D point cloud data to KITTI format."""
     
-    def __init__(self, output_dir: str):
+    def __init__(self, output_dir: str, calib_dir: Optional[str] = None, 
+                 camera_name: str = 'camera_front_wide', image_root: Optional[str] = None):
         """
         Initialize KITTI converter.
         
         Args:
             output_dir: Output directory for converted data
+            calib_dir: Optional directory containing YAML calibration files
+            camera_name: Name of the camera to use (default: camera_front_wide)
+            image_root: Optional root directory containing image subdirectories
         """
         self.output_dir = Path(output_dir)
         
@@ -27,10 +31,22 @@ class KITTIConverter:
         self.velodyne_dir = self.output_dir / "velodyne"
         self.calib_dir = self.output_dir / "calib"
         self.label_dir = self.output_dir / "label"
+        self.image_dir = self.output_dir / "image_2"  # Main camera images
         
         ensure_dir(self.velodyne_dir)
         ensure_dir(self.calib_dir)
         ensure_dir(self.label_dir)
+        ensure_dir(self.image_dir)
+        
+        # Calibration and image settings
+        self.calib_dir_src = Path(calib_dir) if calib_dir else None
+        self.camera_name = camera_name
+        self.image_root = Path(image_root) if image_root else None
+        self.yaml_calib = None
+        
+        # Load YAML calibration if provided
+        if self.calib_dir_src:
+            self._load_camera_calibration()
         
         self.frame_id = 0
     
@@ -65,8 +81,17 @@ class KITTIConverter:
         output_path = self.velodyne_dir / f"{frame_name}.bin"
         self._save_kitti_bin(points, output_path)
         
-        # Create default calibration file
-        self._create_default_calib(frame_name)
+        # Create calibration file (real or default)
+        if self.yaml_calib:
+            self._create_calib_from_yaml(frame_name)
+        else:
+            self._create_default_calib(frame_name)
+        
+        # Copy matched image if image root is provided
+        if self.image_root:
+            pc_timestamp = self._extract_timestamp_from_path(src_path)
+            if pc_timestamp is not None:
+                self._copy_matched_image(pc_timestamp, frame_name)
         
         self.frame_id += 1
         return frame_name
@@ -215,17 +240,159 @@ class KITTIConverter:
             if frame_name:
                 converted += 1
         
-        # Save metadata
-        metadata = {
-            "format": "KITTI",
-            "num_frames": converted,
-            "velodyne_dir": str(self.velodyne_dir.relative_to(self.output_dir)),
-            "calib_dir": str(self.calib_dir.relative_to(self.output_dir)),
-        }
-        save_json(metadata, str(self.output_dir / "metadata.json"))
+        # Skip metadata.json - information embedded in data structure
         
         return {
             "total_frames": converted,
             "velodyne_files": len(list(self.velodyne_dir.glob("*.bin"))),
-            "calib_files": len(list(self.calib_dir.glob("*.txt")))
+            "calib_files": len(list(self.calib_dir.glob("*.txt"))),
+            "image_files": len(list(self.image_dir.glob("*.[jp][pn]g")))
         }
+    
+    def _load_camera_calibration(self) -> None:
+        """Load camera calibration from YAML file."""
+        import yaml
+        
+        calib_file = self.calib_dir_src / f"{self.camera_name}.yaml"
+        if not calib_file.exists():
+            logger.warning(f"Calibration file not found: {calib_file}, using defaults")
+            return
+        
+        try:
+            # Read file and skip %YAML:1.0 directive line
+            with open(calib_file, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+                # Skip lines starting with % (YAML directives)
+                content = ''.join(line for line in lines if not line.strip().startswith('%'))
+                self.yaml_calib = yaml.safe_load(content)
+            logger.info(f"Loaded calibration from: {calib_file}")
+        except Exception as e:
+            logger.error(f"Failed to load calibration: {e}")
+            self.yaml_calib = None
+    
+    def _rodrigues_to_matrix(self, rvec: list) -> np.ndarray:
+        """Convert rotation vector to rotation matrix (Rodrigues formula)."""
+        rvec = np.array(rvec, dtype=np.float64)
+        theta = np.linalg.norm(rvec)
+        
+        if theta < 1e-10:
+            return np.eye(3)
+        
+        r = rvec / theta
+        K = np.array([
+            [0, -r[2], r[1]],
+            [r[2], 0, -r[0]],
+            [-r[1], r[0], 0]
+        ])
+        
+        R = np.eye(3) + np.sin(theta) * K + (1 - np.cos(theta)) * np.dot(K, K)
+        return R
+    
+    def _create_calib_from_yaml(self, frame_name: str) -> None:
+        """Create KITTI calibration file from YAML parameters."""
+        if not self.yaml_calib:
+            self._create_default_calib(frame_name)
+            return
+        
+        calib_path = self.calib_dir / f"{frame_name}.txt"
+        
+        try:
+            # Extract parameters from YAML
+            fx = self.yaml_calib.get('fx', 1.0)
+            fy = self.yaml_calib.get('fy', 1.0)
+            cx = self.yaml_calib.get('cx', 0.0)
+            cy = self.yaml_calib.get('cy', 0.0)
+            
+            # Build projection matrix P2 (3x4)
+            P2 = f"P2: {fx} 0 {cx} 0 0 {fy} {cy} 0 0 0 1 0"
+            
+            # Use P2 for all cameras (simplified)
+            P0 = f"P0: {fx} 0 {cx} 0 0 {fy} {cy} 0 0 0 1 0"
+            P1 = f"P1: {fx} 0 {cx} 0 0 {fy} {cy} 0 0 0 1 0"
+            P3 = f"P3: {fx} 0 {cx} 0 0 {fy} {cy} 0 0 0 1 0"
+            
+            # Rectification rotation (identity)
+            R0_rect = "R0_rect: 1 0 0 0 1 0 0 0 1"
+            
+            # Extract rotation and translation for Tr_velo_to_cam
+            r_s2b = self.yaml_calib.get('r_s2b', [0, 0, 0])
+            t_s2b = self.yaml_calib.get('t_s2b', [0, 0, 0])
+            
+            # Convert rotation vector to matrix
+            R = self._rodrigues_to_matrix(r_s2b)
+            t = np.array(t_s2b)
+            
+            # Build Tr_velo_to_cam (3x4 transformation matrix)
+            Tr_velo_to_cam = (
+                f"Tr_velo_to_cam: {R[0,0]} {R[0,1]} {R[0,2]} {t[0]} "
+                f"{R[1,0]} {R[1,1]} {R[1,2]} {t[1]} "
+                f"{R[2,0]} {R[2,1]} {R[2,2]} {t[2]}"
+            )
+            
+            # Default Tr_imu_to_velo
+            Tr_imu_to_velo = "Tr_imu_to_velo: 1 0 0 0 0 1 0 0 0 0 1 0"
+            
+            # Write calibration file
+            with open(calib_path, 'w') as f:
+                f.write(f"{P0}\n{P1}\n{P2}\n{P3}\n")
+                f.write(f"{R0_rect}\n")
+                f.write(f"{Tr_velo_to_cam}\n")
+                f.write(f"{Tr_imu_to_velo}\n")
+            
+            logger.debug(f"Created calibration with real parameters: {calib_path}")
+            
+        except Exception as e:
+            logger.warning(f"Failed to create calibration from YAML: {e}, using defaults")
+            self._create_default_calib(frame_name)
+    
+    def _extract_timestamp_from_path(self, path: Path) -> Optional[float]:
+        """Extract timestamp from point cloud filename."""
+        try:
+            # Filename format: "1744693431.39.pcd"
+            stem = path.stem  # "1744693431.39"
+            return float(stem)
+        except Exception as e:
+            logger.debug(f"Could not extract timestamp from {path.name}: {e}")
+            return None
+    
+    def _copy_matched_image(self, pc_timestamp: float, frame_name: str) -> None:
+        """Find and copy the closest matching image."""
+        # Image directory: sensor_camera_front_wide_video
+        image_subdir = self.image_root / f"sensor_{self.camera_name}_video"
+        
+        if not image_subdir.exists():
+            logger.warning(f"Image directory not found: {image_subdir}")
+            return
+        
+        # Find all images
+        images = list(image_subdir.glob('*.jpg')) + list(image_subdir.glob('*.png'))
+        
+        if not images:
+            logger.warning(f"No images found in {image_subdir}")
+            return
+        
+        # Find closest image by timestamp
+        closest_image = None
+        min_diff = float('inf')
+        
+        for img_path in images:
+            try:
+                # Extract timestamp from filename: "1744693432.191269.jpg"
+                img_ts = float(img_path.stem)
+                diff = abs(img_ts - pc_timestamp)
+                
+                if diff < min_diff:
+                    min_diff = diff
+                    closest_image = img_path
+            except:
+                continue
+        
+        if closest_image and min_diff < 0.1:  # 100ms threshold
+            # Copy image to KITTI image_2 directory
+            import shutil
+            dst_path = self.image_dir / f"{frame_name}{closest_image.suffix}"
+            shutil.copy2(str(closest_image), str(dst_path))
+            logger.debug(f"Copied image: {closest_image.name} -> {dst_path.name} (Δt={min_diff*1000:.1f}ms)")
+        else:
+            logger.warning(f"No matching image found for timestamp {pc_timestamp} (min_diff={min_diff:.3f}s)")
+

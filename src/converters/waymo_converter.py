@@ -148,20 +148,7 @@ class WaymoConverter:
                 self.add_frame(**frame_data, sequence_name=seq_name)
                 total_frames += 1
         
-        # Save metadata
-        metadata = {
-            "format": "Waymo-style",
-            "num_sequences": len(self.sequences),
-            "total_frames": total_frames,
-            "sequences": {
-                name: {
-                    "num_frames": len(info['frames']),
-                    "frame_list": info['frames']
-                }
-                for name, info in self.sequences.items()
-            }
-        }
-        save_json(metadata, str(self.output_dir / "metadata.json"))
+        # Skip metadata.json - sequence information managed internally
         
         return {
             "total_sequences": len(self.sequences),

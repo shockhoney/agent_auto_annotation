@@ -49,9 +49,8 @@ class FormatConverter:
         inspector = DataInspector(str(self.input_dir))
         self.inspection_result = inspector.inspect()
         
-        # Save inspection report
-        inspection_report_path = self.output_dir / "inspection_report.json"
-        inspector.save_report(str(inspection_report_path))
+        # Skip saving inspection report - only keep in-memory results
+        # (inspection data is available in self.inspection_result)
         
         # Determine data type
         if self.force_type:
@@ -119,7 +118,18 @@ class FormatConverter:
         logger.info("Converting to KITTI format...")
         
         output_3d = self.output_dir / "pre_labeling_3d"
-        converter = KITTIConverter(str(output_3d))
+        
+        # Check for calibration and image directories
+        calib_dir = self.input_dir / "calib_anno"
+        img_dir = self.input_dir / "img"
+        
+        # Initialize converter with calibration and image support
+        converter = KITTIConverter(
+            str(output_3d),
+            calib_dir=str(calib_dir) if calib_dir.exists() else None,
+            camera_name="camera_front_wide",  # Use front wide camera as main
+            image_root=str(img_dir) if img_dir.exists() else None
+        )
         
         # Find point cloud directories
         pc_dirs = self._find_pointcloud_directories()
@@ -134,6 +144,8 @@ class FormatConverter:
         logger.info(f"✓ Converted {stats['total_frames']} point cloud frames")
         logger.info(f"✓ Created {stats['velodyne_files']} velodyne files")
         logger.info(f"✓ Created {stats['calib_files']} calibration files")
+        if 'image_files' in stats and stats['image_files'] > 0:
+            logger.info(f"✓ Matched {stats['image_files']} camera images")
         
         return stats
     

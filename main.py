@@ -61,6 +61,12 @@ def main():
     )
     
     parser.add_argument(
+        '--no-split',
+        action='store_true',
+        help='跳过train/val划分（用于推理模式）'
+    )
+    
+    parser.add_argument(
         '--no-validate',
         action='store_true',
         help='跳过验证步骤'
@@ -104,7 +110,10 @@ def main():
         logger.info("=" * 60)
         
         config_gen = ConfigGenerator(str(output_subdir), data_type)
-        config = config_gen.generate_config(train_split=args.train_split)
+        config = config_gen.generate_config(
+            train_split=args.train_split,
+            skip_split=args.no_split  # Pass skip_split flag
+        )
         
         # 步骤 4: 验证（如果未跳过）
         if not args.no_validate:
@@ -125,7 +134,7 @@ def main():
         logger.info("✓ 处理流程成功完成！")
         logger.info(f"✓ 输出目录: {output_subdir}")
         logger.info(f"✓ 配置文件: {output_subdir / 'data_config.yaml'}")
-        logger.info(f"✓ 数据清单: {output_subdir / 'dataset_manifest.json'}")
+        logger.info(f"✓ 数据已准备就绪，可直接用于模型训练")
         logger.info("🎉 " * 20)
         
         return 0

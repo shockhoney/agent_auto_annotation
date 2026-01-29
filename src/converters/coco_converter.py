@@ -248,14 +248,6 @@ class COCOConverter:
         save_json(self.coco_data, str(output_path))
         logger.info(f"COCO annotations saved to: {output_path}")
         
-        # Also save metadata
-        metadata = {
-            "format": "COCO",
-            "num_images": len(self.coco_data["images"]),
-            "num_annotations": len(self.coco_data["annotations"]),
-            "num_categories": len(self.coco_data["categories"]),
-            "categories": [cat["name"] for cat in self.coco_data["categories"]]
-        }
-        save_json(metadata, str(self.output_dir / "metadata.json"))
+        # Skip metadata.json - information already in annotations.json
         
         return str(output_path)
