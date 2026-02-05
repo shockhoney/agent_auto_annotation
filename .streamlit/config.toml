@@ -1,0 +1,10 @@
+[server]
+# 最大上传文件大小设置为 20GB (单位为 MB)
+maxUploadSize = 20480
+
+# 设置最大消息大小为 20GB (单位为 MB)
+maxMessageSize = 20480
+
+[browser]
+# 禁用浏览器自动聚焦，避免干扰
+gatherUsageStats = false
