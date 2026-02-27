@@ -12,6 +12,73 @@ import concurrent.futures
 
 
 @tool
+def download_from_cos(cos_path: str, output_dir: str, secret_id: str = "",
+                      secret_key: str = "", region: str = "", bucket: str = "") -> str:
+    """从腾讯云COS下载文件。cos_path格式: 对象键(如 data/test.zip)。"""
+    from qcloud_cos import CosConfig, CosS3Client
+    try:
+        if not all([secret_id, secret_key, region, bucket]):
+            return json.dumps({"error": "COS凭证不完整"}, ensure_ascii=False)
+
+        config = CosConfig(Region=region, SecretId=secret_id, SecretKey=secret_key)
+        client = CosS3Client(config)
+        out = Path(output_dir)
+        out.mkdir(parents=True, exist_ok=True)
+
+        # 尝试作为单文件下载
+        filename = Path(cos_path).name
+        if filename:
+            local_path = out / filename
+            client.download_file(Bucket=bucket, Key=cos_path, DestFilePath=str(local_path))
+            return json.dumps({"status": "success", "file": str(local_path)}, ensure_ascii=False)
+
+        # 前缀匹配批量下载
+        prefix = cos_path.rstrip('/')
+        resp = client.list_objects(Bucket=bucket, Prefix=prefix)
+        files = []
+        for obj in resp.get('Contents', []):
+            key = obj['Key']
+            rel = key[len(prefix):].lstrip('/')
+            if not rel:
+                continue
+            local_path = out / rel
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            client.download_file(Bucket=bucket, Key=key, DestFilePath=str(local_path))
+            files.append(str(local_path))
+        return json.dumps({"status": "success", "files": files, "count": len(files)}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+
+@tool
+def download_from_url(url: str, output_dir: str) -> str:
+    """从HTTP/HTTPS链接下载文件到本地。适用于云盘直链等。"""
+    import requests
+    try:
+        out = Path(output_dir)
+        out.mkdir(parents=True, exist_ok=True)
+
+        resp = requests.get(url, stream=True, timeout=300)
+        resp.raise_for_status()
+
+        # 从响应头或URL提取文件名
+        filename = None
+        cd = resp.headers.get('Content-Disposition', '')
+        if 'filename=' in cd:
+            filename = cd.split('filename=')[-1].strip('"').strip("'")
+        if not filename:
+            filename = Path(url.split('?')[0]).name or 'downloaded_file'
+
+        local_path = out / filename
+        with open(local_path, 'wb') as f:
+            for chunk in resp.iter_content(chunk_size=8192):
+                f.write(chunk)
+        return json.dumps({"status": "success", "file": str(local_path)}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+
+@tool
 def extract_archive(archive_path: str, output_dir: str) -> str:
     """解压压缩包到指定目录。支持zip、tar、gz、7z格式。"""
     import py7zr
